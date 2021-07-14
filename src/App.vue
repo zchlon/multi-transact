@@ -54,7 +54,8 @@
           <p class="p">转账手续费： {{totalFeeUsed | fromWei}} BNB</p>
         </el-form-item>
         <el-form-item>
-          <el-button type="primary" @click="countFee" :disabled="loading" :loading="loading">生成Transaction</el-button>
+          <el-button type="primary" v-if="!checkApprove" @click="approve" :disabled="loading || resultAddress.length==0" :loading="loading">Approve授权</el-button>
+          <el-button type="primary" v-if="checkApprove" @click="countFee" :disabled="loading" :loading="loading">生成Transaction</el-button>
           <el-button type="primary" v-if="transactions.length>0" @click="confirmSubmit" :disabled="loading" :loading="loading">确定转账</el-button>
         </el-form-item>
       </el-form>
@@ -105,6 +106,7 @@ export default {
       transferInstance: null,
       resultAddress: [],
       resultAmount: [],
+      checkApprove: false,
       loading: false,
       tokenBalance: '',
       totalAmount: '',
@@ -203,6 +205,27 @@ export default {
         this.transactions = []
       }
     },
+    async approve() {
+      if (this.resultAddress) {
+        const loading = this.$loading({
+          lock: true,
+          text: 'Loading',
+          spinner: 'el-icon-loading',
+          background: 'rgba(0, 0, 0, 0.7)'
+        });
+        this.tokenInstance = new ethers.Contract(this.tokenContract, this.$config[this.form.chain].abi, this.provider)
+        const res = await this.tokenInstance.balanceOf(this.walletAccount)
+        this.tokenBalance = res.toString()
+
+        const numVal = new BigNumber(ethers.utils.parseUnits(this.totalAmount, this.$config[this.form.chain].decimals).toString())
+
+        this.checkApprove = await this.tokenInstance.connect(this.feeWalletWithProvider).approve(
+          this.$config[this.form.chain].contract['TransferJSON'].address,
+          numVal.toFixed(0)
+        )
+        loading.close()
+      }
+    },
     async countFee() {
       this.loading = true
       const loading = this.$loading({
@@ -211,17 +234,6 @@ export default {
         spinner: 'el-icon-loading',
         background: 'rgba(0, 0, 0, 0.7)'
       });
-
-      this.tokenInstance = new ethers.Contract(this.tokenContract, this.$config[this.form.chain].abi, this.provider)
-      const res = await this.tokenInstance.balanceOf(this.walletAccount)
-      this.tokenBalance = res.toString()
-
-      const numVal = new BigNumber(ethers.utils.parseUnits(this.totalAmount, this.$config[this.form.chain].decimals).toString())
-
-      await this.tokenInstance.connect(this.feeWalletWithProvider).approve(
-        this.$config[this.form.chain].contract['TransferJSON'].address,
-        numVal.toFixed(0)
-      )
       console.log('approve ok')
       let totalNum = this.resultAddress.length
       let maxNum = 300
