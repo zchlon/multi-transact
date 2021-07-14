@@ -8,11 +8,12 @@
     <header>
       <div class="container">
         <el-row :gutter="20">
-          <el-col :span="18">
+          <el-col :span="12">
             <h1>批量转账工具</h1>
           </el-col>
-          <el-col :span="6">
-            <span v-if="account">{{account | abbr}}</span>
+          <el-col :span="12">
+            <span style="display:inline-block;margin-right:20px" v-if="walletAccount">{{walletAccount | abbr}} <small>(metaMask)</small></span>
+            <span v-if="account">{{account | abbr}} <small>(fee)</small></span>
             <!-- <el-button @click="connect" v-else>Input Private Key</el-button> -->
           </el-col>
         </el-row>
@@ -26,27 +27,34 @@
           <!-- <el-radio v-model="form.chain" label="HECH" border>HECH</el-radio>
           <el-radio v-model="form.chain" label="ETH" border>ETH</el-radio> -->
         </el-form-item>
-        <el-form-item label="私钥" v-if="!walletWithProvider">
+        <el-form-item label="请输入Token合约地址">
+          <el-input type="text" v-model="tokenContract" autocomplete="off"></el-input>
+        </el-form-item>
+        <el-form-item label="手续费钱包私钥" v-if="!feeWalletWithProvider">
           <el-input type="text" v-model="privateKey" autocomplete="off" ></el-input>
         </el-form-item>
-        <el-form-item v-if="!walletWithProvider">
-          <el-button type="primary" @click="connect" :disabled="loading" :loading="loading">连接</el-button>
+        <el-form-item v-if="!feeWalletWithProvider">
+          <el-button type="primary" @click="connect" :disabled="loading" :loading="loading">MetaMask连接</el-button>
         </el-form-item>
       </el-form>
-      <el-form v-if="walletWithProvider" ref="form" label-position="top" :model="form" label-width="200px">
+      <el-form v-if="feeWalletWithProvider" ref="form" label-position="top" :model="form" label-width="200px">
+        
         <el-form-item label="请输入地址和转账金额" prop="address">
           <el-input type="textarea" v-model="form.address" :rows="10" autocomplete="off" @input="addressInput"></el-input>
           <div class="tips">格式：地址 + 英文逗号 + 转账金额。一行一个地址。 <a href="javascript:;" @click="checkDemo">查看Demo</a></div>
+        </el-form-item>
+        <el-form-item label="GAS费">
+          <el-input type="text" v-model="gasPrice" autocomplete="off" ></el-input>
         </el-form-item>
         <el-form-item label="详细">
           <!-- <p class="p">Token余额： {{tokenBalance | formatUnits}}</p> -->
           <p class="p">Token转账： {{totalAmount}}</p>
           <!-- <p class="p">BNB余额： {{feeBalance | fromWei}} BNB</p> -->
-          <p class="p">GAS费用： {{totalGasCost | fromWei}} BNB</p>
+          <p class="p">GAS总费用： {{totalGasCost | fromWei}} BNB</p>
           <p class="p">转账手续费： {{totalFeeUsed | fromWei}} BNB</p>
         </el-form-item>
         <el-form-item>
-          <el-button type="primary" @click="onSubmit" :disabled="loading" :loading="loading">生成Transaction</el-button>
+          <el-button type="primary" @click="countFee" :disabled="loading" :loading="loading">生成Transaction</el-button>
           <el-button type="primary" v-if="transactions.length>0" @click="confirmSubmit" :disabled="loading" :loading="loading">确定转账</el-button>
         </el-form-item>
       </el-form>
@@ -86,10 +94,13 @@ export default {
         chain: 'bscTestnet',
         address: '',
       },
+      tokenContract: '0xbd2F3a31154AfB86bA921E4f418C46FdAf2737BE',
       privateKey: '8b55a19e9bf951bbea8061dd1d6028a809c0f16af79cbfbf47d384048c8526cc',
       provider: null,
-      walletWithProvider: null,
+      metamaskProvider: null,
+      feeWalletWithProvider: null,
       account: '',
+      walletAccount: '',
       tokenInstance: null,
       transferInstance: null,
       resultAddress: [],
@@ -135,23 +146,24 @@ export default {
   methods: {
     async connect() {
       this.loading = true
-      // Connect a wallet to mainnet
-      console.log(this.$config[this.form.chain].endpoint)
+      // Connect a wallet      
+      this.metamaskProvider = new ethers.providers.Web3Provider(window.ethereum);
+      const accounts = await window.ethereum.request({ method: 'eth_requestAccounts' })
+      this.walletAccount = accounts[0]
+      
       this.provider = new ethers.providers.JsonRpcProvider(this.$config[this.form.chain].endpoint)
-      this.walletWithProvider = new ethers.Wallet(this.privateKey, this.provider)
+      this.feeWalletWithProvider = new ethers.Wallet(this.privateKey, this.provider)
       this.loading = false
-      this.account = this.walletWithProvider.address
-      // const resb = await this.walletWithProvider.getBalance(this.account)
-      // console.log(resb)
-      this.init()
-    },
-    async init() {
-      this.tokenInstance = new ethers.Contract(this.$config[this.form.chain].contract['TokenJSON'].address, this.$config[this.form.chain].contract['TokenJSON'].abi, this.provider)
-      const res = await this.tokenInstance.balanceOf(this.account)
-      this.tokenBalance = res.toString()
+      this.account = this.feeWalletWithProvider.address
+
       const bnb = await this.provider.getBalance(this.account)
       this.feeBalance = bnb.toString()
-
+      this.gasPrice = (await this.provider.getGasPrice()).toString()
+    },
+    async init() {
+      this.tokenInstance = new ethers.Contract(this.tokenContract, this.$config[this.form.chain].abi, this.provider)
+      const res = await this.tokenInstance.balanceOf(this.walletAccount)
+      this.tokenBalance = res.toString()
     },
     checkDemo() {
       this.form.address = `0xC1b2566B4262bb18ECBfbB89bfBCE98b70257796,10
@@ -164,7 +176,6 @@ export default {
         this.timer = null
       }
       if (this.form.address) {
-
         setTimeout(async () => {
           this.loading = true
           const addr = this.form.address //window.encodeURIComponent(this.form.address)
@@ -180,7 +191,6 @@ export default {
             totalAmount = totalAmount.plus(t[1])
           })
           this.totalAmount = totalAmount.toString()
-          this.gasPrice = (await this.provider.getGasPrice()).toString()
           if (!this.transferInstance) {
             this.transferInstance = new ethers.Contract(this.$config[this.form.chain].contract['TransferJSON'].address, this.$config[this.form.chain].contract['TransferJSON'].abi, this.provider)
           }
@@ -188,7 +198,6 @@ export default {
           console.log(this.gasPrice)
           console.log(this.feePercent)
           this.loading = false
-          this.countFee()
         }, 500);
         
       } else {
@@ -201,12 +210,21 @@ export default {
     },
     async countFee() {
       this.loading = true
+      const loading = this.$loading({
+        lock: true,
+        text: 'Loading',
+        spinner: 'el-icon-loading',
+        background: 'rgba(0, 0, 0, 0.7)'
+      });
+
+      await this.init()
+
       const numVal = new BigNumber(ethers.utils.parseUnits(this.totalAmount, this.$config[this.form.chain].decimals).toString())
 
       console.log(this.$config[this.form.chain].contract['TransferJSON'].address)
       console.log(numVal.toString())
 
-      await this.tokenInstance.connect(this.walletWithProvider).approve(
+      await this.tokenInstance.connect(this.feeWalletWithProvider).approve(
         this.$config[this.form.chain].contract['TransferJSON'].address,
         numVal.toFixed(0)
       )
@@ -232,8 +250,8 @@ export default {
         for (let i = 0; i < addressArrays.length; i ++) {
           let addresses = addressArrays[i];
           let amounts = amountArrays[i];
-          let gasUsed = new BigNumber((await this.transferInstance.connect(this.walletWithProvider).estimateGas.batchTransfer(
-            this.$config[this.form.chain].contract['TokenJSON'].address,
+          let gasUsed = new BigNumber((await this.transferInstance.connect(this.feeWalletWithProvider).estimateGas.batchTransfer(
+            this.tokenContract,
             this.account, 
             addresses, 
             amounts, 
@@ -264,19 +282,8 @@ export default {
       this.addressArrays = addressArrays
       this.amountArrays = amountArrays
       this.feeUsedArray = feeUsedArray
-      this.loading = false
-    },
-    async onSubmit() {
-      this.loading = true
-      const loading = this.$loading({
-        lock: true,
-        text: 'Loading',
-        spinner: 'el-icon-loading',
-        background: 'rgba(0, 0, 0, 0.7)'
-      });
+      
       let nonce = await this.provider.getTransactionCount(this.account);
-
-      let gasPrice = new BigNumber(this.gasPrice)
 
       let transactions = []
       for (let i = 0; i < this.addressArrays.length; i ++) {
@@ -284,7 +291,7 @@ export default {
         let amounts = this.amountArrays[i];
         let feeUsed = this.feeUsedArray[i];
         let transaction = await this.transferInstance.populateTransaction.batchTransfer(
-          this.$config[this.form.chain].contract['TokenJSON'].address,
+          this.tokenContract,
           this.account, 
           addresses, 
           amounts, 
@@ -294,19 +301,7 @@ export default {
         transactions.push(transaction);
       }
       this.transactions = transactions
-      console.log('transactions')
-      console.log(this.transactions)
-      
-      // let txs = []
-      // for (let i = 0; i < transactions.length; i ++) {
-      //   let transaction = transactions[i];
-      //   let tx = await this.walletWithProvider.sendTransaction(transaction);
-      //   txs.push(tx);
-      // }
-      // for (let i = 0; i < txs.length; i ++) {
-      //   let tx = txs[i];
-      //   tx = await tx.wait();
-      // }
+
       this.loading = false
       loading.close()
     },
@@ -314,7 +309,7 @@ export default {
       let txs = []
       for (let i = 0; i < this.transactions.length; i ++) {
         let transaction = this.transactions[i];
-        let tx = await this.walletWithProvider.sendTransaction(transaction);
+        let tx = await this.feeWalletWithProvider.sendTransaction(transaction);
         txs.push(tx);
       }
       for (let i = 0; i < txs.length; i ++) {
