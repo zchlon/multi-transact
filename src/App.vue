@@ -149,18 +149,19 @@ export default {
     async connect() {
       this.loading = true
       // Connect a wallet      
-      this.metamaskProvider = new ethers.providers.Web3Provider(window.ethereum);
+      this.metamaskProvider = new ethers.providers.Web3Provider(window.web3.currentProvider);
       const accounts = await window.ethereum.request({ method: 'eth_requestAccounts' })
       this.walletAccount = accounts[0]
       
       this.provider = new ethers.providers.JsonRpcProvider(this.$config[this.form.chain].endpoint)
+      // this.provider = new ethers.providers.Web3Provider(window.ethereum);
       this.feeWalletWithProvider = new ethers.Wallet(this.privateKey, this.provider)
       this.loading = false
       this.account = this.feeWalletWithProvider.address
 
-      const bnb = await this.provider.getBalance(this.account)
+      const bnb = await this.metamaskProvider.getBalance(this.account)
       this.feeBalance = bnb.toString()
-      this.gasPrice = (await this.provider.getGasPrice()).toString()
+      this.gasPrice = (await this.metamaskProvider.getGasPrice()).toString()
     },
     checkDemo() {
       this.form.address = `0xC1b2566B4262bb18ECBfbB89bfBCE98b70257796,10
@@ -188,10 +189,7 @@ export default {
             totalAmount = totalAmount.plus(t[1])
           })
           this.totalAmount = totalAmount.toString()
-          if (!this.transferInstance) {
-            this.transferInstance = new ethers.Contract(this.$config[this.form.chain].contract['TransferJSON'].address, this.$config[this.form.chain].contract['TransferJSON'].abi, this.provider)
-          }
-          this.feePercent = (await this.transferInstance.feePercent()).toString()
+          
           console.log(this.gasPrice)
           console.log(this.feePercent)
           this.loading = false
@@ -213,16 +211,22 @@ export default {
           spinner: 'el-icon-loading',
           background: 'rgba(0, 0, 0, 0.7)'
         });
-        this.tokenInstance = new ethers.Contract(this.tokenContract, this.$config[this.form.chain].abi, this.provider)
+        this.tokenInstance = new ethers.Contract(this.tokenContract, this.$config[this.form.chain].abi, this.metamaskProvider)
         const res = await this.tokenInstance.balanceOf(this.walletAccount)
         this.tokenBalance = res.toString()
 
         const numVal = new BigNumber(ethers.utils.parseUnits(this.totalAmount, this.$config[this.form.chain].decimals).toString())
 
-        this.checkApprove = await this.tokenInstance.connect(this.feeWalletWithProvider).approve(
-          this.$config[this.form.chain].contract['TransferJSON'].address,
-          numVal.toFixed(0)
-        )
+        try {
+          this.checkApprove = await this.tokenInstance.approve(
+            this.$config[this.form.chain].contract['TransferJSON'].address,
+            numVal.toFixed(0)
+          )
+        } catch(e) {
+          console.log(e)
+          this.checkApprove = false
+        }
+        console.log('approve ok')
         loading.close()
       }
     },
@@ -234,13 +238,12 @@ export default {
         spinner: 'el-icon-loading',
         background: 'rgba(0, 0, 0, 0.7)'
       });
-      console.log('approve ok')
       let totalNum = this.resultAddress.length
       let maxNum = 300
       let loopNum = Math.floor(totalNum / maxNum) + (totalNum % maxNum == 0 ? 0 : 1)
       let addressArrays = [];
       let amountArrays = [];
-      let balance = new BigNumber(this.feeBalance);
+      // let balance = new BigNumber(this.feeBalance);
       let gasPrice = new BigNumber(this.gasPrice);
       let feePercent = new BigNumber(this.feePercent);
       for (let loop = 0; loop < loopNum; loop++) {
@@ -251,28 +254,37 @@ export default {
       }
       let feeUsedArray = [];
       let gasCostArray = [];
-      try {
-        console.log(balance.toFixed(0))
-        for (let i = 0; i < addressArrays.length; i ++) {
-          let addresses = addressArrays[i];
-          let amounts = amountArrays[i];
-          let gasUsed = new BigNumber((await this.transferInstance.connect(this.feeWalletWithProvider).estimateGas.batchTransfer(
-            this.tokenContract,
-            this.account, 
-            addresses, 
-            amounts, 
-            false, 
-            {value: balance.toFixed(0)}
-            )).toString()
-          );
-          let gasCost = gasUsed.multipliedBy(gasPrice);
-          let feeUsed = gasUsed.multipliedBy(gasPrice).multipliedBy(feePercent).dividedBy('1000000000000000000');
-          feeUsedArray.push(feeUsed);
-          gasCostArray.push(gasCost);
-        }
-      } catch(e) {
-        console.log(e)
+      if (!this.transferInstance) {
+        this.transferInstance = new ethers.Contract(this.$config[this.form.chain].contract['TransferJSON'].address, this.$config[this.form.chain].contract['TransferJSON'].abi, this.provider)
       }
+      this.feePercent = (await this.transferInstance.feePercent()).toString()
+      console.log('after loop')
+      for (let i = 0; i < addressArrays.length; i ++) {
+        let addresses = addressArrays[i];
+        let amounts = amountArrays[i];
+        console.log(JSON.stringify([this.tokenContract,
+          this.walletAccount, 
+          addresses, 
+          amounts,
+          false, 
+          {value: this.feeBalance}]))
+        let gasStr = (await this.transferInstance.connect(this.feeWalletWithProvider).estimateGas.batchTransfer(
+          this.tokenContract,
+          this.walletAccount, 
+          addresses, 
+          amounts,
+          false, 
+          {value: this.feeBalance}
+        )).toString()
+        console.log(gasStr)
+        let gasUsed = new BigNumber(gasStr);
+        let gasCost = gasUsed.multipliedBy(gasPrice);
+        let feeUsed = gasUsed.multipliedBy(gasPrice).multipliedBy(feePercent).dividedBy('1000000000000000000');
+        feeUsedArray.push(feeUsed);
+        gasCostArray.push(gasCost);
+      }
+      console.log('after gasCostArray')
+      
       let totalFeeUsed = new BigNumber('0');
       for (let feeUsed in feeUsedArray) {
         feeUsed = feeUsedArray[feeUsed];
@@ -291,6 +303,7 @@ export default {
       
       let nonce = await this.provider.getTransactionCount(this.account);
 
+      console.log('start transactions')
       let transactions = []
       for (let i = 0; i < this.addressArrays.length; i ++) {
         let addresses = this.addressArrays[i];
@@ -298,11 +311,15 @@ export default {
         let feeUsed = this.feeUsedArray[i];
         let transaction = await this.transferInstance.populateTransaction.batchTransfer(
           this.tokenContract,
-          this.account, 
+          this.walletAccount,
           addresses, 
           amounts, 
-          false, 
-          {value: feeUsed.toFixed(0), nonce: nonce++, gasPrice: gasPrice.toFixed(0)}
+          false,
+          {
+            value: feeUsed.toFixed(0),
+            nonce: nonce++,
+            gasPrice: gasPrice.toFixed(0)
+          }
         );
         transactions.push(transaction);
       }
