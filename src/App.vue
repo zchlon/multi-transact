@@ -101,6 +101,7 @@ export default {
       metamaskProvider: null,
       feeWalletWithProvider: null,
       account: '',
+      signer: '',
       walletAccount: '',
       tokenInstance: null,
       transferInstance: null,
@@ -149,7 +150,9 @@ export default {
     async connect() {
       this.loading = true
       // Connect a wallet      
-      this.metamaskProvider = new ethers.providers.Web3Provider(window.web3.currentProvider);
+      this.metamaskProvider = new ethers.providers.Web3Provider(window.ethereum);
+      this.signer = this.metamaskProvider.getSigner();
+
       const accounts = await window.ethereum.request({ method: 'eth_requestAccounts' })
       this.walletAccount = accounts[0]
       
@@ -211,7 +214,7 @@ export default {
           spinner: 'el-icon-loading',
           background: 'rgba(0, 0, 0, 0.7)'
         });
-        this.tokenInstance = new ethers.Contract(this.tokenContract, this.$config[this.form.chain].abi, this.metamaskProvider)
+        this.tokenInstance = new ethers.Contract(this.tokenContract, this.$config[this.form.chain].abi, this.signer)
         const res = await this.tokenInstance.balanceOf(this.walletAccount)
         this.tokenBalance = res.toString()
 
@@ -238,6 +241,11 @@ export default {
         spinner: 'el-icon-loading',
         background: 'rgba(0, 0, 0, 0.7)'
       });
+      if (!this.transferInstance) {
+        this.transferInstance = new ethers.Contract(this.$config[this.form.chain].contract['TransferJSON'].address, this.$config[this.form.chain].contract['TransferJSON'].abi, this.provider)
+      }
+      this.feePercent = (await this.transferInstance.feePercent()).toString()
+
       let totalNum = this.resultAddress.length
       let maxNum = 300
       let loopNum = Math.floor(totalNum / maxNum) + (totalNum % maxNum == 0 ? 0 : 1)
@@ -254,20 +262,11 @@ export default {
       }
       let feeUsedArray = [];
       let gasCostArray = [];
-      if (!this.transferInstance) {
-        this.transferInstance = new ethers.Contract(this.$config[this.form.chain].contract['TransferJSON'].address, this.$config[this.form.chain].contract['TransferJSON'].abi, this.provider)
-      }
-      this.feePercent = (await this.transferInstance.feePercent()).toString()
+      
       console.log('after loop')
       for (let i = 0; i < addressArrays.length; i ++) {
         let addresses = addressArrays[i];
         let amounts = amountArrays[i];
-        console.log(JSON.stringify([this.tokenContract,
-          this.walletAccount, 
-          addresses, 
-          amounts,
-          false, 
-          {value: this.feeBalance}]))
         let gasStr = (await this.transferInstance.connect(this.feeWalletWithProvider).estimateGas.batchTransfer(
           this.tokenContract,
           this.walletAccount, 
@@ -280,9 +279,15 @@ export default {
         let gasUsed = new BigNumber(gasStr);
         let gasCost = gasUsed.multipliedBy(gasPrice);
         let feeUsed = gasUsed.multipliedBy(gasPrice).multipliedBy(feePercent).dividedBy('1000000000000000000');
+        console.log('gasUsed: ' + gasUsed)
+        console.log('gasPrice: ' + gasPrice)
+        console.log('feePercent: ' + feePercent)
+        console.log('feeUsed: ' + feeUsed)
         feeUsedArray.push(feeUsed);
         gasCostArray.push(gasCost);
       }
+      console.log(feeUsedArray)
+      console.log(gasCostArray)
       console.log('after gasCostArray')
       
       let totalFeeUsed = new BigNumber('0');
@@ -329,6 +334,13 @@ export default {
       loading.close()
     },
     async confirmSubmit() {
+      this.loading = true
+      const loading = this.$loading({
+        lock: true,
+        text: 'Loading',
+        spinner: 'el-icon-loading',
+        background: 'rgba(0, 0, 0, 0.7)'
+      });
       let txs = []
       for (let i = 0; i < this.transactions.length; i ++) {
         let transaction = this.transactions[i];
@@ -339,6 +351,9 @@ export default {
         let tx = txs[i];
         tx = await tx.wait();
       }
+      this.loading = false
+      loading.close()
+      window.alert('转账成功')
     }
   }
 }
