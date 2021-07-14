@@ -160,11 +160,6 @@ export default {
       this.feeBalance = bnb.toString()
       this.gasPrice = (await this.provider.getGasPrice()).toString()
     },
-    async init() {
-      this.tokenInstance = new ethers.Contract(this.tokenContract, this.$config[this.form.chain].abi, this.provider)
-      const res = await this.tokenInstance.balanceOf(this.walletAccount)
-      this.tokenBalance = res.toString()
-    },
     checkDemo() {
       this.form.address = `0xC1b2566B4262bb18ECBfbB89bfBCE98b70257796,10
 0xBac7136B6F2C0F6559a7620Ab9Bf27E5687D73F4,20`
@@ -217,12 +212,11 @@ export default {
         background: 'rgba(0, 0, 0, 0.7)'
       });
 
-      await this.init()
+      this.tokenInstance = new ethers.Contract(this.tokenContract, this.$config[this.form.chain].abi, this.provider)
+      const res = await this.tokenInstance.balanceOf(this.walletAccount)
+      this.tokenBalance = res.toString()
 
       const numVal = new BigNumber(ethers.utils.parseUnits(this.totalAmount, this.$config[this.form.chain].decimals).toString())
-
-      console.log(this.$config[this.form.chain].contract['TransferJSON'].address)
-      console.log(numVal.toString())
 
       await this.tokenInstance.connect(this.feeWalletWithProvider).approve(
         this.$config[this.form.chain].contract['TransferJSON'].address,
